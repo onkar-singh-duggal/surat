@@ -2,39 +2,32 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 
-const sortingOptions = [
-  { value: "price-asc", label: "Sort by price(asc)" },
-  { value: "price-desc", label: "Sort by price(desc)" },
-  { value: "created_at-asc", label: "Sort by created at(asc)" },
-  { value: "created_at-desc", label: "Sort by created at(desc)" },
-  { value: "rating-asc", label: "Sort by rating (asc)" },
-  { value: "rating-desc", label: "Sort by rating (desc)" },
-];
-
 function SortBy() {
   const router = useRouter();
-  const params = useSearchParams();
-  const searchParams = new URLSearchParams(params);
+  const searchParams = useSearchParams();
+  const params = new URLSearchParams(searchParams.toString());
+
+  const handleSortChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    params.set("sort", e.target.value);
+    router.push(`/products?${params.toString()}`);
+  };
 
   return (
-    <div className="text-black flex gap-2">
-      <p className="text-white text-lg">Sort By</p>
+    <div className="mb-4">
+      <label htmlFor="sort" className="mr-2 font-semibold">
+        Sort By:
+      </label>
       <select
-        name="sorting"
-        id="sorting"
-        value={String(searchParams.get("sortBy"))}
-        onChange={(e) => {
-          alert("Please update the code.");
-        }}
+        id="sort"
+        className="text-black p-2"
+        value={params.get("sort") || ""}
+        onChange={handleSortChange}
       >
-        <option value="">None</option>
-        {sortingOptions.map((option, i) => {
-          return (
-            <option key={i} value={option.value}>
-              {option.label}
-            </option>
-          );
-        })}
+        <option value="">Default</option>
+        <option value="price_asc">Price: Low to High</option>
+        <option value="price_desc">Price: High to Low</option>
+        <option value="name_asc">Name: A to Z</option>
+        <option value="name_desc">Name: Z to A</option>
       </select>
     </div>
   );

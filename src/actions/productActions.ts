@@ -9,19 +9,38 @@ import { revalidatePath } from "next/cache";
 import { authOptions } from "@/utils/authOptions";
 import { cache } from "react";
 
-export async function getProducts(pageNo = 1, pageSize = DEFAULT_PAGE_SIZE) {
+// ✅ getProducts with pagination + sorting support
+export async function getProducts(
+  pageNo = 1,
+  pageSize = DEFAULT_PAGE_SIZE,
+  sortBy = ""
+) {
   try {
-    let products;
-    let dbQuery = db.selectFrom("products").selectAll("products");
-
-    const { count } = await dbQuery
-      // .select(sql`COUNT(DISTINCT products.id) as count`)
+    // Get total product count
+    const totalProducts = await db
+      .selectFrom("products")
+      .select(sql<number>`COUNT(*)`.as("count"))
       .executeTakeFirst();
 
+    const count = totalProducts?.count || 0;
     const lastPage = Math.ceil(count / pageSize);
 
-    products = await dbQuery
-      .distinct()
+    // Build the query
+    let query = db.selectFrom("products").selectAll().distinct();
+
+    // ✅ Add sorting logic
+    if (sortBy === "price_asc") {
+      query = query.orderBy("price", "asc");
+    } else if (sortBy === "price_desc") {
+      query = query.orderBy("price", "desc");
+    } else if (sortBy === "name_asc") {
+      query = query.orderBy("name", "asc");
+    } else if (sortBy === "name_desc") {
+      query = query.orderBy("name", "desc");
+    }
+
+    // ✅ Add pagination
+    const products = await query
       .offset((pageNo - 1) * pageSize)
       .limit(pageSize)
       .execute();
@@ -30,12 +49,13 @@ export async function getProducts(pageNo = 1, pageSize = DEFAULT_PAGE_SIZE) {
 
     return { products, count, lastPage, numOfResultsOnCurPage };
   } catch (error) {
-    throw error;
+    console.error("Error in getProducts:", error);
+    return { products: [], count: 0, lastPage: 1, numOfResultsOnCurPage: 0 };
   }
 }
 
+// ✅ get single product
 export const getProduct = cache(async function getProduct(productId: number) {
-  // console.log("run");
   try {
     const product = await db
       .selectFrom("products")
@@ -45,88 +65,80 @@ export const getProduct = cache(async function getProduct(productId: number) {
 
     return product;
   } catch (error) {
+    console.error("Error in getProduct:", error);
     return { error: "Could not find the product" };
   }
 });
 
-async function enableForeignKeyChecks() {
-  await sql`SET foreign_key_checks = 1`.execute(db);
-}
-
-async function disableForeignKeyChecks() {
-  await sql`SET foreign_key_checks = 0`.execute(db);
-}
-
+// ✅ delete product
 export async function deleteProduct(productId: number) {
   try {
-    await disableForeignKeyChecks();
+    await sql`SET foreign_key_checks = 0`.execute(db);
+
     await db
       .deleteFrom("product_categories")
-      .where("product_categories.product_id", "=", productId)
+      .where("product_id", "=", productId)
       .execute();
-    await db
-      .deleteFrom("reviews")
-      .where("reviews.product_id", "=", productId)
-      .execute();
-
-    await db
-      .deleteFrom("comments")
-      .where("comments.product_id", "=", productId)
-      .execute();
-
+    await db.deleteFrom("reviews").where("product_id", "=", productId).execute();
+    await db.deleteFrom("comments").where("product_id", "=", productId).execute();
     await db.deleteFrom("products").where("id", "=", productId).execute();
 
-    await enableForeignKeyChecks();
+    await sql`SET foreign_key_checks = 1`.execute(db);
     revalidatePath("/products");
-    return { message: "success" };
+
+    return { message: "Product deleted successfully" };
   } catch (error) {
-    return { error: "Something went wrong, Cannot delete the product" };
+    console.error("Error in deleteProduct:", error);
+    return { error: "Something went wrong, cannot delete product" };
   }
 }
 
-export async function MapBrandIdsToName(brandsId) {
-  const brandsMap = new Map();
+// ✅ map brand ids to names
+export async function MapBrandIdsToName(brandsId: number[]) {
   try {
-    for (let i = 0; i < brandsId.length; i++) {
-      const brandId = brandsId.at(i);
-      const brand = await db
-        .selectFrom("brands")
-        .select("name")
-        .where("id", "=", +brandId)
-        .executeTakeFirst();
-      brandsMap.set(brandId, brand?.name);
-    }
-    return brandsMap;
+    const brands = await db
+      .selectFrom("brands")
+      .select(["id", "name"])
+      .where("id", "in", brandsId)
+      .execute();
+
+    return new Map(brands.map((brand) => [brand.id, brand.name]));
   } catch (error) {
+    console.error("Error in MapBrandIdsToName:", error);
     throw error;
   }
 }
 
-export async function getAllProductCategories(products: any) {
+// ✅ get all product categories for list
+export async function getAllProductCategories(products: any[]) {
   try {
     const productsId = products.map((product) => product.id);
-    const categoriesMap = new Map();
 
-    for (let i = 0; i < productsId.length; i++) {
-      const productId = productsId.at(i);
-      const categories = await db
-        .selectFrom("product_categories")
-        .innerJoin(
-          "categories",
-          "categories.id",
-          "product_categories.category_id"
-        )
-        .select("categories.name")
-        .where("product_categories.product_id", "=", productId)
-        .execute();
-      categoriesMap.set(productId, categories);
-    }
+    const categories = await db
+      .selectFrom("product_categories")
+      .innerJoin(
+        "categories",
+        "categories.id",
+        "product_categories.category_id"
+      )
+      .select(["product_categories.product_id", "categories.name"])
+      .where("product_categories.product_id", "in", productsId)
+      .execute();
+
+    const categoriesMap = new Map();
+    categories.forEach(({ product_id, name }) => {
+      if (!categoriesMap.has(product_id)) categoriesMap.set(product_id, []);
+      categoriesMap.get(product_id).push(name);
+    });
+
     return categoriesMap;
   } catch (error) {
+    console.error("Error in getAllProductCategories:", error);
     throw error;
   }
 }
 
+// ✅ get categories for single product
 export async function getProductCategories(productId: number) {
   try {
     const categories = await db
@@ -142,6 +154,7 @@ export async function getProductCategories(productId: number) {
 
     return categories;
   } catch (error) {
+    console.error("Error in getProductCategories:", error);
     throw error;
   }
 }
